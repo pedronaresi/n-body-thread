@@ -3,7 +3,6 @@
 #include <string.h>
 #include <math.h>
 #include <sys/time.h>
-#include <pthread.h>
 
 /*
  * pRNG based on http://www.cs.wm.edu/~va/software/park/park.html
@@ -11,8 +10,6 @@
 #define MODULUS    2147483647
 #define MULTIPLIER 48271
 #define DEFAULT    123456789
-
-#define MAX_THREADS 2 //1, 2, 4, 8
 
 static long seed = DEFAULT;
 
@@ -48,63 +45,40 @@ typedef struct {
   double fx, fy, fz;
 } ParticleV;
 
-void InitParticles(Particle[], ParticleV [], int);
-void* ComputeForces(void *);
-void* ComputeNewPos(void *);
+void InitParticles( Particle[], ParticleV [], int );
+double ComputeForces( Particle [], Particle [], ParticleV [], int );
+double ComputeNewPos( Particle [], ParticleV [], int, double);
 
-//Variasveis que vao para dentro da thread
-//double time;
-Particle  * particles;   /* Particulas */
-ParticleV * pv;          /* Velocidade da Particula */
-int         npart;
-double    * sim_t;       /* Tempo de Simulacao */
+int main()
+{
+  //double time;
+  Particle  * particles;   /* Particulas */
+  ParticleV * pv;          /* Velocidade da Particula */
+  int         npart;
+  double      sim_t;       /* Tempo de Simulacao */
 
-struct timeval inicio, final2;
-int tmili;
-
-int tid;
-double * max_f;
-
-int main() {
-  int th;
   //scanf("%d",&npart);
   npart = 25000;
   /* Allocate memory for particles */
   particles = (Particle *) malloc(sizeof(Particle)*npart);
   pv = (ParticleV *) malloc(sizeof(ParticleV)*npart);
-  sim_t = (double *) malloc(sizeof(double)*MAX_THREADS);
-  max_f = (double *) malloc(sizeof(double)*MAX_THREADS);
   /* Generate the initial values */
   InitParticles( particles, pv, npart);
 
-  //Creating array of Threads
-  pthread_t t[MAX_THREADS];
+  sim_t = 0.0;
 
-  for (int i = 0; i < MAX_THREADS; i++) {
-    sim_t[i] = 0.0;
-  }
+  struct timeval inicio, final2;
+  int tmili;
+
+  int tid;
+  double max_f;
 
   gettimeofday(&inicio, NULL);
 
-  for(th=0; th<MAX_THREADS; th++) {
-    pthread_create(&t[th], NULL, ComputeForces, (void *) th);
-  }
-
-  for(th=0; th<MAX_THREADS; th++) {
-    pthread_join(t[th],NULL);
-  }
-
-  for(th=1; th<MAX_THREADS; th++) {
-    if (max_f[0]<max_f[th]) max_f[0]=max_f[th];
-  }
-
-  for(th=0; th<MAX_THREADS; th++) {
-    pthread_create(&t[th], NULL, ComputeNewPos, (void *) th);
-  }
-
-  for(th=0; th<MAX_THREADS; th++) {
-    pthread_join(t[th],NULL);
-  }
+  /* Compute forces (2D only) */
+  max_f = ComputeForces(particles, particles, pv, npart);
+  /* Once we have the forces, we compute the changes in position */
+  sim_t = ComputeNewPos(particles, pv, npart, max_f);
 
   gettimeofday(&final2, NULL);
   tmili = (int) (1000 * (final2.tv_sec - inicio.tv_sec) +
@@ -113,8 +87,8 @@ int main() {
   //for (i=0; i<npart; i++)
   //fprintf(stdout,"%.5lf %.5lf %.5lf\n", particles[i].x, particles[i].y, particles[i].z);
 
-  printf("%g\n", max_f[0]);
-  printf("%g\n", sim_t[0]);
+  printf("%g\n", max_f);
+  printf("%g\n", sim_t);
 
   printf("%d\n", tmili);
 
@@ -138,28 +112,25 @@ void InitParticles( Particle particles[], ParticleV pv[], int npart )
   }
 }
 
-void *ComputeForces(void *tid) {
-  double max_in_f;
+double ComputeForces( Particle myparticles[], Particle others[], ParticleV pv[], int npart )
+{
+  double max_f;
   int i;
-  max_in_f = 0.0;
-
-  int thid;
-
-  thid = (long) tid;
+  max_f = 0.0;
 
   int j;
   double xi, yi, rx, ry, mj, r, fx, fy, rmin;
 
-  for (i=thid; i<npart; i+=MAX_THREADS) {
+  for (i=0; i<npart; i++) {
     rmin = 100.0;
-    xi   = particles[i].x;
-    yi   = particles[i].y;
+    xi   = myparticles[i].x;
+    yi   = myparticles[i].y;
     fx   = 0.0;
     fy   = 0.0;
-    for (j=thid; j<npart; j+=MAX_THREADS) {
-      rx = xi - particles[j].x;
-      ry = yi - particles[j].y;
-      mj = particles[j].mass;
+    for (j=0; j<npart; j++) {
+      rx = xi - others[j].x;
+      ry = yi - others[j].y;
+      mj = others[j].mass;
       r  = rx * rx + ry * ry;
       /* ignore overlap and same particle */
       if (r == 0.0) continue;
@@ -171,27 +142,22 @@ void *ComputeForces(void *tid) {
     pv[i].fx += fx;
     pv[i].fy += fy;
     fx = sqrt(fx*fx + fy*fy)/rmin;
-    if (fx > max_in_f) max_in_f = fx;
+    if (fx > max_f) max_f = fx;
   }
-  max_f[thid] = max_in_f;
-
-  pthread_exit(0);
+  return max_f;
 }
 
-void *ComputeNewPos(void *tid) {
+double ComputeNewPos( Particle particles[], ParticleV pv[], int npart, double max_f)
+{
   int i;
   double a0, a1, a2;
   static double dt_old = 0.001, dt = 0.001;
   double dt_new;
-
-  int thid;
-  thid = (long) tid;
-
   a0	 = 2.0 / (dt * (dt + dt_old));
   a2	 = 2.0 / (dt_old * (dt + dt_old));
   a1	 = -(a0 + a2);
 
-  for (i=thid; i<npart; i+=MAX_THREADS) {
+  for (i=0; i<npart; i++) {
     double xi, yi;
     xi	           = particles[i].x;
     yi	           = particles[i].y;
@@ -202,7 +168,7 @@ void *ComputeNewPos(void *tid) {
     pv[i].fx       = 0;
     pv[i].fy       = 0;
   }
-  dt_new = 1.0/sqrt(max_f[0]);
+  dt_new = 1.0/sqrt(max_f);
   /* Set a minimum: */
   if (dt_new < 1.0e-6) dt_new = 1.0e-6;
   /* Modify time step */
@@ -214,6 +180,5 @@ void *ComputeNewPos(void *tid) {
     dt_old = dt;
     dt    *= 2.0;
   }
-  sim_t[thid] = dt_old;
-  pthread_exit(0);
+  return dt_old;
 }
