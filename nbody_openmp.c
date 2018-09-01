@@ -80,7 +80,7 @@ int main()
 
   gettimeofday(&inicio, NULL);
 
-  omp_set_num_threads(4);
+  omp_set_num_threads(2);
 
   /* Compute forces (2D only) */
   max_f = ComputeForces(particles, particles, pv, npart);
@@ -126,7 +126,7 @@ double ComputeForces( Particle myparticles[], Particle others[], ParticleV pv[],
   double xi, yi, rx, ry, mj, r, fx, fy, rmin;
   #pragma omp parallel reduction(max:max_f)
   {
-    printf("Compute_Forces thread: %d\n", omp_get_thread_num());
+    printf("  Compute_Forces thread: %d\n", omp_get_thread_num());
     max_f = 0.0;
     #pragma omp for private(i, j, rmin, xi, yi, fx, fy, rx, ry, mj, r)
     for (i=0; i<npart; i++) {
@@ -167,7 +167,7 @@ double ComputeNewPos( Particle particles[], ParticleV pv[], int npart, double ma
   a1	 = -(a0 + a2);
   #pragma omp parallel private(dt_old, dt_new) reduction(*:dt)
   {
-    printf("Compute_New_Pos thread: %d\n", omp_get_thread_num());
+    printf("    Compute_New_Pos thread: %d\n", omp_get_thread_num());
     #pragma omp for private(i, a0, a2, a1)
     for (i=0; i<npart; i++) {
       double xi, yi;
